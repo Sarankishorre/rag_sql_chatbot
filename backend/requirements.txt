@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pandas
+sentence-transformers
+chromadb
+requests
+scikit-learn
+ 
