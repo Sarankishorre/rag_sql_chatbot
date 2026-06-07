@@ -3,6 +3,5 @@ uvicorn[standard]
 pandas
 sentence-transformers
 chromadb
-requests
+groq
 scikit-learn
- 
