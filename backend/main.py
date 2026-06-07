@@ -5,6 +5,7 @@ import pandas as pd
 import sqlite3
 import requests
 import re
+import math
 from sentence_transformers import SentenceTransformer
 import chromadb
 from groq import Groq
@@ -20,7 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── startup: load data, build schema, populate vectorDB ──────────────────────
+# ── startup ──────────────────────────────────────────────────────────────────
 print("Loading Titanic dataset...")
 df = pd.read_csv("https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv")
 df = df.head(500)
@@ -29,7 +30,8 @@ conn = sqlite3.connect("titanic.db", check_same_thread=False)
 df.to_sql("titanic", conn, if_exists="replace", index=False)
 conn.commit()
 print("SQLite DB ready.")
-#BUILD SCHEMA ( DESCRIPTIVE VERSION OF COLUMNS)
+
+# BUILD SCHEMA
 def build_schema(df, col):
     col_values = df[col]
     dtypee = str(col_values.dtype)
@@ -46,14 +48,14 @@ def build_schema(df, col):
         sample = clean.sample(min(5, len(clean)), random_state=42).tolist()
         value_info = f"sample texts: {sample}"
     return f"column: {col}\n dtype: {dtypee}\n{value_info}\n"
-#FOR EACH COL CALL THE BUILD SCHEMA 
+
 schema = {col: build_schema(df, col) for col in df.columns}
 print(f"Schema built for {len(schema)} columns.")
 
 print("Loading sentence transformer...")
 model = SentenceTransformer("all-MiniLM-L6-v2")
-#CREATE A CHROMA DB(COSINE SIMILARITY) IF EXIST DELETE AND CREATE NEW
 
+# CHROMADB SETUP
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 try:
     chroma_client.delete_collection("titanic_collections")
@@ -67,7 +69,8 @@ for col, desc in schema.items():
 print("ChromaDB ready.")
 
 # ── helpers ───────────────────────────────────────────────────────────────────
-#TAKE THE QUERY AND CONVERT IT INTO EMBEDDING AND RETRIEVE THE RELEVANT COLUMNS
+
+# RETRIEVE RELEVANT COLUMNS USING VECTOR SEARCH
 def retrieve_schema(query: str, top_k: int = 5) -> str:
     vector = model.encode(query).tolist()
     result = collection.query(query_embeddings=[vector], n_results=top_k)
@@ -82,26 +85,27 @@ if not groq_api_key:
 groq_model = os.getenv("GROQ_MODEL")
 if not groq_model:
     raise RuntimeError("GROQ_MODEL must be set in backend/.env or the environment.")
+
 groq_client = Groq(api_key=groq_api_key)
-#SEND THE RETRIEVED COLUMNS(SCHEMA ) AND THE QUERY TO GENERATE SQL COMMAND
+
+# GENERATE SQL FROM QUESTION + HISTORY
 def generate_sql(query: str, schema_text: str, history: list) -> str:
     system_prompt = f"""You are a SQL expert. Table name is 'titanic'.
-    Write ONE valid SQLite SQL query to answer the question.
-    Return ONLY the SQL query. No explanation. No markdown. No backticks.
-    - Always use SQLite syntax (LIMIT not TOP, use IS NULL not ISNULL)
-    - Always SELECT * or include Name column when user asks for details
-    - Only use columns: PassengerId, Survived, Pclass, Name, Sex, Age, SibSp, Parch, Ticket, Fare, Cabin, Embarked
+Write ONE valid SQLite SQL query to answer the question.
+Return ONLY the SQL query. No explanation. No markdown. No backticks.
+- Always use SQLite syntax (LIMIT not TOP, use IS NULL not ISNULL)
+- Always SELECT * or include Name column when user asks for details
+- Only use columns: PassengerId, Survived, Pclass, Name, Sex, Age, SibSp, Parch, Ticket, Fare, Cabin, Embarked
+- For UNION queries always wrap each SELECT in subquery: SELECT * FROM (SELECT ... ORDER BY ... LIMIT n) UNION SELECT * FROM (SELECT ... ORDER BY ... LIMIT n)
 
-    Column descriptions:
-    {schema_text}"""
+Column descriptions:
+{schema_text}"""
 
     messages = [{"role": "system", "content": system_prompt}]
-    
-    # add previous conversation history
+
     for msg in history:
         messages.append({"role": msg.role, "content": msg.content})
-    
-    # add current question
+
     messages.append({"role": "user", "content": f"Question: {query}\nSQL:"})
 
     response = groq_client.chat.completions.create(
@@ -112,11 +116,42 @@ def generate_sql(query: str, schema_text: str, history: list) -> str:
     sql = re.sub(r"```sql|```", "", sql).strip()
     return sql
 
-import math
-#RUN THE SQL AND TAKE THE RELEVANT OUTPUT
+# AUTO-FIX SQL IF IT FAILS
+def validate_and_fix_sql(sql: str) -> str:
+    # fix common mistakes automatically
+    sql = re.sub(r'\bSELECT\s+TOP\s+(\d+)\b', r'SELECT', sql, flags=re.IGNORECASE)
+    sql = re.sub(r'\bISNULL\s*\(([^,]+),([^)]+)\)', r'COALESCE(\1,\2)', sql, flags=re.IGNORECASE)
+
+    # test run silently
+    try:
+        pd.read_sql(sql, conn)
+        return sql  # works fine
+    except Exception as e:
+        error_msg = str(e)
+        # ask groq to fix it
+        fix_prompt = f"""This SQLite query failed with error: {error_msg}
+
+Failed SQL: {sql}
+
+Fix the SQL query for SQLite. Rules:
+- Use LIMIT not TOP
+- For UNION with ORDER BY, wrap each SELECT in subquery: SELECT * FROM (SELECT ... ORDER BY ... LIMIT n)
+- Use IS NULL not ISNULL
+- Use COALESCE not ISNULL
+- Only use columns: PassengerId, Survived, Pclass, Name, Sex, Age, SibSp, Parch, Ticket, Fare, Cabin, Embarked
+Return ONLY the fixed SQL. No explanation. No markdown. No backticks."""
+
+        fix_response = groq_client.chat.completions.create(
+            model=groq_model,
+            messages=[{"role": "user", "content": fix_prompt}]
+        )
+        fixed_sql = fix_response.choices[0].message.content.strip()
+        fixed_sql = re.sub(r"```sql|```", "", fixed_sql).strip()
+        return fixed_sql
+
+# RUN SQL AND CLEAN OUTPUT
 def run_sql(sql: str):
     result = pd.read_sql(sql, conn)
-    # Replace NaN/inf with None so JSON can serialize it
     result = result.where(pd.notnull(result), other=None)
     rows = []
     for record in result.to_dict(orient="records"):
@@ -129,7 +164,7 @@ def run_sql(sql: str):
         rows.append(clean)
     return rows, list(result.columns)
 
-# ── API routes ────────────────────────────────────────────────────────────────
+# ── API models ────────────────────────────────────────────────────────────────
 class Message(BaseModel):
     role: str
     content: str
@@ -138,6 +173,7 @@ class QueryRequest(BaseModel):
     question: str
     history: list[Message] = []
 
+# ── API routes ────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -147,9 +183,13 @@ def query(req: QueryRequest):
     try:
         schema_text = retrieve_schema(req.question)
         sql = generate_sql(req.question, schema_text, req.history)
+
+        # auto-fix sql if it fails
+        sql = validate_and_fix_sql(sql)
+
         rows, columns = run_sql(sql)
 
-        # Generate friendly description
+        # generate friendly description
         summary_prompt = f"""You are a helpful data analyst.
 A user asked: "{req.question}"
 The SQL query returned {len(rows)} row(s): {rows[:5]}
@@ -180,6 +220,7 @@ No SQL. No technical terms."""
             "count": 0,
             "description": ""
         }
+
 @app.get("/schema")
 def get_schema():
     safe_schema = {k: str(v) for k, v in schema.items()}
