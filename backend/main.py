@@ -29,7 +29,7 @@ conn = sqlite3.connect("titanic.db", check_same_thread=False)
 df.to_sql("titanic", conn, if_exists="replace", index=False)
 conn.commit()
 print("SQLite DB ready.")
-
+#BUILD SCHEMA ( DESCRIPTIVE VERSION OF COLUMNS)
 def build_schema(df, col):
     col_values = df[col]
     dtypee = str(col_values.dtype)
@@ -46,12 +46,13 @@ def build_schema(df, col):
         sample = clean.sample(min(5, len(clean)), random_state=42).tolist()
         value_info = f"sample texts: {sample}"
     return f"column: {col}\n dtype: {dtypee}\n{value_info}\n"
-
+#FOR EACH COL CALL THE BUILD SCHEMA 
 schema = {col: build_schema(df, col) for col in df.columns}
 print(f"Schema built for {len(schema)} columns.")
 
 print("Loading sentence transformer...")
 model = SentenceTransformer("all-MiniLM-L6-v2")
+#CREATE A CHROMA DB(COSINE SIMILARITY) IF EXIST DELETE AND CREATE NEW
 
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 try:
@@ -66,6 +67,7 @@ for col, desc in schema.items():
 print("ChromaDB ready.")
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+#TAKE THE QUERY AND CONVERT IT INTO EMBEDDING AND RETRIEVE THE RELEVANT COLUMNS
 def retrieve_schema(query: str, top_k: int = 5) -> str:
     vector = model.encode(query).tolist()
     result = collection.query(query_embeddings=[vector], n_results=top_k)
@@ -81,15 +83,19 @@ groq_model = os.getenv("GROQ_MODEL")
 if not groq_model:
     raise RuntimeError("GROQ_MODEL must be set in backend/.env or the environment.")
 groq_client = Groq(api_key=groq_api_key)
+#SEND THE RETRIEVED COLUMNS(SCHEMA ) AND THE QUERY TO GENERATE SQL COMMAND
 def generate_sql(query: str, schema_text: str) -> str:
     prompt = f"""You are a SQL expert. Table name is 'titanic'.
-Write ONE valid SQLite SQL query to answer the question.
-Return ONLY the SQL query. No explanation. No markdown. No backticks.
+    Write ONE valid SQLite SQL query to answer the question.
+    Return ONLY the SQL query. No explanation. No markdown. No backticks.
+    - Always use SQLite syntax (LIMIT not TOP, no ISNULL use IS NULL)
+    - Always SELECT * or include Name column when user asks for "details"
+    - Never assume column names, only use: PassengerId, Survived, Pclass, Name, Sex, Age, SibSp, Parch, Ticket, Fare, Cabin, Embarked
 
-Column descriptions:
-{schema_text}
-Question: {query}
-SQL:"""
+    Column descriptions:
+    {schema_text}
+    Question: {query}
+    SQL:"""
     response = groq_client.chat.completions.create(
         model=groq_model,
         messages=[{"role": "user", "content": prompt}]
@@ -99,7 +105,7 @@ SQL:"""
     return sql
 
 import math
-
+#RUN THE SQL AND TAKE THE RELEVANT OUTPUT
 def run_sql(sql: str):
     result = pd.read_sql(sql, conn)
     # Replace NaN/inf with None so JSON can serialize it
@@ -125,20 +131,35 @@ def health():
 
 @app.post("/query")
 def query(req: QueryRequest):
+
     try:
         schema_text = retrieve_schema(req.question)
         sql = generate_sql(req.question, schema_text)
         rows, columns = run_sql(sql)
+
+        # Generate friendly description
+        summary_prompt = f"""You are a helpful data analyst. 
+    A user asked: "{req.question}"
+    The SQL query returned {len(rows)} row(s): {rows[:5]}
+    Write a SHORT 1-2 sentence friendly summary of the result in plain English.
+    No SQL. No technical terms. Just a clear human-friendly answer."""
+
+        summary_response = groq_client.chat.completions.create(
+            model=groq_model,
+            messages=[{"role": "user", "content": summary_prompt}]
+        )
+        description = summary_response.choices[0].message.content.strip()
+
         return {
             "success": True,
             "sql": sql,
             "columns": columns,
             "rows": rows,
-            "count": len(rows)
+            "count": len(rows),
+            "description": description
         }
     except Exception as e:
-        return {"success": False, "error": str(e), "sql": "", "columns": [], "rows": [], "count": 0}
-
+        return {"success": False, "error": str(e), "sql": "", "columns": [], "rows": [], "count": 0, "description": ""}
 @app.get("/schema")
 def get_schema():
     safe_schema = {k: str(v) for k, v in schema.items()}

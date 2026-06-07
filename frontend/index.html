@@ -608,7 +608,6 @@ function appendThinking() {
   scrollBottom();
   return el;
 }
-
 function appendResult(data) {
   const container = document.getElementById("messages");
   const el = document.createElement("div");
@@ -621,9 +620,17 @@ function appendResult(data) {
     `;
   } else {
     const tableHtml = buildTable(data.columns, data.rows);
+    const descHtml = data.description
+      ? `<div style="padding: 0.75rem 1rem; font-size: 0.88rem; color: #cdd6f4; line-height: 1.6; border-bottom: 1px solid var(--border); background: rgba(167,139,250,0.04);">
+           <span style="font-size:0.65rem; font-family:var(--font-mono); color:var(--accent2); text-transform:uppercase; letter-spacing:0.08em; display:block; margin-bottom:4px;">Summary</span>
+           ${escHtml(data.description)}
+         </div>`
+      : "";
+
     el.innerHTML = `
       <div class="msg-label"><span>🤖</span> Assistant</div>
       <div class="assistant-card">
+        ${descHtml}
         <div class="sql-block">
           <div class="sql-label">Generated SQL</div>
           <div class="sql-code">${escHtml(data.sql)}</div>
@@ -638,7 +645,6 @@ function appendResult(data) {
   container.appendChild(el);
   scrollBottom();
 }
-
 function buildTable(cols, rows) {
   if (!cols || cols.length === 0) return '<p style="color:var(--muted);font-size:.82rem;">No results.</p>';
   const header = cols.map(c => `<th>${escHtml(c)}</th>`).join("");
