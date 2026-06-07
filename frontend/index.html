@@ -38,7 +38,6 @@
     overflow-x: hidden;
   }
 
-  /* ── noise overlay ── */
   body::before {
     content: '';
     position: fixed;
@@ -49,7 +48,6 @@
     opacity: 0.5;
   }
 
-  /* ── header ── */
   header {
     position: relative;
     z-index: 2;
@@ -103,7 +101,6 @@
   .dot.online { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
   .dot.error { background: var(--danger); }
 
-  /* ── main layout ── */
   main {
     position: relative;
     z-index: 1;
@@ -113,7 +110,6 @@
     height: calc(100vh - 65px);
   }
 
-  /* ── sidebar ── */
   aside {
     border-right: 1px solid var(--border);
     padding: 1.5rem 1.25rem;
@@ -178,7 +174,6 @@
     border: 1px solid var(--border);
   }
 
-  /* ── chat area ── */
   .chat-area {
     display: flex;
     flex-direction: column;
@@ -194,12 +189,10 @@
     gap: 2rem;
   }
 
-  /* scrollbar */
   .messages::-webkit-scrollbar { width: 4px; }
   .messages::-webkit-scrollbar-track { background: transparent; }
   .messages::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
 
-  /* ── welcome card ── */
   .welcome {
     display: flex;
     flex-direction: column;
@@ -224,7 +217,6 @@
   }
   .welcome p { color: var(--muted); font-size: 0.9rem; max-width: 380px; line-height: 1.6; }
 
-  /* ── message bubbles ── */
   .msg {
     display: flex;
     flex-direction: column;
@@ -262,7 +254,6 @@
     overflow: hidden;
   }
 
-  /* sql block */
   .sql-block {
     border-bottom: 1px solid var(--border);
     padding: 0.75rem 1rem;
@@ -285,7 +276,6 @@
     word-break: break-word;
   }
 
-  /* table */
   .table-wrap {
     overflow-x: auto;
     padding: 0.75rem 1rem 1rem;
@@ -336,7 +326,6 @@
     font-family: var(--font-mono);
   }
 
-  /* ── thinking indicator ── */
   .thinking {
     display: flex; align-items: center; gap: 8px;
     color: var(--muted); font-size: 0.82rem;
@@ -354,7 +343,6 @@
   .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
   .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
 
-  /* ── input area ── */
   .input-area {
     border-top: 1px solid var(--border);
     padding: 1rem 2rem;
@@ -414,7 +402,6 @@
     text-align: center;
   }
 
-  /* ── api config banner ── */
   .api-config {
     background: rgba(167, 139, 250, 0.08);
     border: 1px solid rgba(167, 139, 250, 0.2);
@@ -438,7 +425,6 @@
   }
   .api-config input::placeholder { color: rgba(167, 139, 250, 0.4); }
 
-  /* ── animations ── */
   @keyframes fadeUp {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
@@ -448,7 +434,6 @@
     40% { opacity: 1; }
   }
 
-  /* ── mobile ── */
   @media (max-width: 700px) {
     main { grid-template-columns: 1fr; }
     aside { display: none; }
@@ -472,7 +457,6 @@
 </header>
 
 <main>
-  <!-- sidebar -->
   <aside>
     <div>
       <h3>Try asking</h3>
@@ -486,13 +470,10 @@
 
     <div>
       <h3>Dataset columns</h3>
-      <div class="schema-list" id="schemaList">
-        <!-- populated by JS -->
-      </div>
+      <div class="schema-list" id="schemaList"></div>
     </div>
   </aside>
 
-  <!-- chat -->
   <div class="chat-area">
     <div class="messages" id="messages">
       <div class="welcome" id="welcome">
@@ -532,7 +513,6 @@ const COLUMNS = [
   { name: "Embarked",    dtype: "object" },
 ];
 
-// render sidebar schema
 const schemaList = document.getElementById("schemaList");
 COLUMNS.forEach(c => {
   const el = document.createElement("div");
@@ -541,7 +521,6 @@ COLUMNS.forEach(c => {
   schemaList.appendChild(el);
 });
 
-// auto-resize textarea
 const textarea = document.getElementById("questionInput");
 textarea.addEventListener("input", () => {
   textarea.style.height = "auto";
@@ -551,7 +530,6 @@ textarea.addEventListener("keydown", e => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendQuery(); }
 });
 
-// health check
 async function checkHealth() {
   const url = document.getElementById("apiUrl").value.trim();
   const dot = document.getElementById("statusDot");
@@ -608,6 +586,7 @@ function appendThinking() {
   scrollBottom();
   return el;
 }
+
 function appendResult(data) {
   const container = document.getElementById("messages");
   const el = document.createElement("div");
@@ -645,6 +624,7 @@ function appendResult(data) {
   container.appendChild(el);
   scrollBottom();
 }
+
 function buildTable(cols, rows) {
   if (!cols || cols.length === 0) return '<p style="color:var(--muted);font-size:.82rem;">No results.</p>';
   const header = cols.map(c => `<th>${escHtml(c)}</th>`).join("");
@@ -662,6 +642,8 @@ function scrollBottom() {
 function escHtml(s) {
   return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
+
+let chatHistory = [];
 
 async function sendQuery() {
   const input = textarea.value.trim();
@@ -681,14 +663,32 @@ async function sendQuery() {
     const res = await fetch(`${url}/query`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: input }),
+      body: JSON.stringify({ 
+        question: input,
+        history: chatHistory
+      }),
     });
     const data = await res.json();
     thinking.remove();
     appendResult(data);
+
+    if (data.success) {
+      chatHistory.push({ role: "user", content: input });
+      chatHistory.push({ 
+        role: "assistant", 
+        content: `SQL: ${data.sql}\nSummary: ${data.description}` 
+      });
+      if (chatHistory.length > 10) {
+        chatHistory = chatHistory.slice(chatHistory.length - 10);
+      }
+    }
+
   } catch (err) {
     thinking.remove();
-    appendResult({ success: false, error: `Could not reach backend at ${url}. Is it running?` });
+    appendResult({ 
+      success: false, 
+      error: `Could not reach backend at ${url}. Is it running?` 
+    });
   }
 
   btn.disabled = false;

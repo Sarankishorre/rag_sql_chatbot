@@ -84,21 +84,29 @@ if not groq_model:
     raise RuntimeError("GROQ_MODEL must be set in backend/.env or the environment.")
 groq_client = Groq(api_key=groq_api_key)
 #SEND THE RETRIEVED COLUMNS(SCHEMA ) AND THE QUERY TO GENERATE SQL COMMAND
-def generate_sql(query: str, schema_text: str) -> str:
-    prompt = f"""You are a SQL expert. Table name is 'titanic'.
+def generate_sql(query: str, schema_text: str, history: list) -> str:
+    system_prompt = f"""You are a SQL expert. Table name is 'titanic'.
     Write ONE valid SQLite SQL query to answer the question.
     Return ONLY the SQL query. No explanation. No markdown. No backticks.
-    - Always use SQLite syntax (LIMIT not TOP, no ISNULL use IS NULL)
-    - Always SELECT * or include Name column when user asks for "details"
-    - Never assume column names, only use: PassengerId, Survived, Pclass, Name, Sex, Age, SibSp, Parch, Ticket, Fare, Cabin, Embarked
+    - Always use SQLite syntax (LIMIT not TOP, use IS NULL not ISNULL)
+    - Always SELECT * or include Name column when user asks for details
+    - Only use columns: PassengerId, Survived, Pclass, Name, Sex, Age, SibSp, Parch, Ticket, Fare, Cabin, Embarked
 
     Column descriptions:
-    {schema_text}
-    Question: {query}
-    SQL:"""
+    {schema_text}"""
+
+    messages = [{"role": "system", "content": system_prompt}]
+    
+    # add previous conversation history
+    for msg in history:
+        messages.append({"role": msg.role, "content": msg.content})
+    
+    # add current question
+    messages.append({"role": "user", "content": f"Question: {query}\nSQL:"})
+
     response = groq_client.chat.completions.create(
         model=groq_model,
-        messages=[{"role": "user", "content": prompt}]
+        messages=messages
     )
     sql = response.choices[0].message.content.strip()
     sql = re.sub(r"```sql|```", "", sql).strip()
@@ -122,8 +130,13 @@ def run_sql(sql: str):
     return rows, list(result.columns)
 
 # ── API routes ────────────────────────────────────────────────────────────────
+class Message(BaseModel):
+    role: str
+    content: str
+
 class QueryRequest(BaseModel):
     question: str
+    history: list[Message] = []
 
 @app.get("/health")
 def health():
@@ -131,18 +144,17 @@ def health():
 
 @app.post("/query")
 def query(req: QueryRequest):
-
     try:
         schema_text = retrieve_schema(req.question)
-        sql = generate_sql(req.question, schema_text)
+        sql = generate_sql(req.question, schema_text, req.history)
         rows, columns = run_sql(sql)
 
         # Generate friendly description
-        summary_prompt = f"""You are a helpful data analyst. 
-    A user asked: "{req.question}"
-    The SQL query returned {len(rows)} row(s): {rows[:5]}
-    Write a SHORT 1-2 sentence friendly summary of the result in plain English.
-    No SQL. No technical terms. Just a clear human-friendly answer."""
+        summary_prompt = f"""You are a helpful data analyst.
+A user asked: "{req.question}"
+The SQL query returned {len(rows)} row(s): {rows[:5]}
+Write a SHORT 1-2 sentence friendly summary in plain English.
+No SQL. No technical terms."""
 
         summary_response = groq_client.chat.completions.create(
             model=groq_model,
@@ -159,7 +171,15 @@ def query(req: QueryRequest):
             "description": description
         }
     except Exception as e:
-        return {"success": False, "error": str(e), "sql": "", "columns": [], "rows": [], "count": 0, "description": ""}
+        return {
+            "success": False,
+            "error": str(e),
+            "sql": "",
+            "columns": [],
+            "rows": [],
+            "count": 0,
+            "description": ""
+        }
 @app.get("/schema")
 def get_schema():
     safe_schema = {k: str(v) for k, v in schema.items()}
