@@ -7,7 +7,8 @@ import requests
 import re
 from sentence_transformers import SentenceTransformer
 import chromadb
-
+from groq import Groq
+import os
 app = FastAPI(title="Titanic SQL Assistant API")
 
 app.add_middleware(
@@ -68,21 +69,22 @@ def retrieve_schema(query: str, top_k: int = 5) -> str:
     result = collection.query(query_embeddings=[vector], n_results=top_k)
     return "\n\n".join(result["documents"][0])
 
+
+groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 def generate_sql(query: str, schema_text: str) -> str:
     prompt = f"""You are a SQL expert. Table name is 'titanic'.
-Given these column descriptions, write ONE valid SQLite SQL query to answer the question.
+Write ONE valid SQLite SQL query to answer the question.
 Return ONLY the SQL query. No explanation. No markdown. No backticks.
 
 Column descriptions:
 {schema_text}
 Question: {query}
 SQL:"""
-    response = requests.post(
-        "http://localhost:11434/api/generate",
-        json={"model": "llama3", "prompt": prompt, "stream": False},
-        timeout=60
+    response = groq_client.chat.completions.create(
+        model="llama3-8b-8192",
+        messages=[{"role": "user", "content": prompt}]
     )
-    sql = response.json()["response"].strip()
+    sql = response.choices[0].message.content.strip()
     sql = re.sub(r"```sql|```", "", sql).strip()
     return sql
 
