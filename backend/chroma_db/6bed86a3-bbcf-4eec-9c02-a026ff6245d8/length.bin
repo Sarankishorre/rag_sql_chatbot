@@ -1,0 +1,11 @@
+n_output):
+        intermediate_output = self.intermediate(attention_output)
+        layer_output = self.output(intermediate_output, attention_output)
+        return layer_output
+
+
+class AlignTextEncoder(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.layer = nn.ModuleList([AlignTextLayer(config) for i in range(config.num_hidden_laye

@@ -8,7 +8,9 @@ import re
 from sentence_transformers import SentenceTransformer
 import chromadb
 from groq import Groq
+from dotenv import load_dotenv
 import os
+
 app = FastAPI(title="Titanic SQL Assistant API")
 
 app.add_middleware(
@@ -69,8 +71,16 @@ def retrieve_schema(query: str, top_k: int = 5) -> str:
     result = collection.query(query_embeddings=[vector], n_results=top_k)
     return "\n\n".join(result["documents"][0])
 
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
-groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+groq_api_key = os.getenv("GROQ_API_KEY")
+if not groq_api_key:
+    raise RuntimeError("GROQ_API_KEY is not set in backend/.env or environment")
+
+groq_model = os.getenv("GROQ_MODEL")
+if not groq_model:
+    raise RuntimeError("GROQ_MODEL must be set in backend/.env or the environment.")
+groq_client = Groq(api_key=groq_api_key)
 def generate_sql(query: str, schema_text: str) -> str:
     prompt = f"""You are a SQL expert. Table name is 'titanic'.
 Write ONE valid SQLite SQL query to answer the question.
@@ -81,7 +91,7 @@ Column descriptions:
 Question: {query}
 SQL:"""
     response = groq_client.chat.completions.create(
-        model="llama3-8b-8192",
+        model=groq_model,
         messages=[{"role": "user", "content": prompt}]
     )
     sql = response.choices[0].message.content.strip()
