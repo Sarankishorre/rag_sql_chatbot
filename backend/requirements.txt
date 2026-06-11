@@ -1,5 +1,9 @@
 fastapi
-uvicorn[standard]
+uvicorn
 pandas
-groq
 requests
+sentence-transformers
+chromadb
+groq
+python-dotenv
+pydantic
