@@ -362,7 +362,7 @@
     const typingEl = addTypingIndicator();
 
     try {
-      const res = await fetch('https://matha-rubbly-sigrid.ngrok-free.dev', {
+      const res = await fetch('https://matha-rubbly-sigrid.ngrok-free.dev/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question, history: [] })
