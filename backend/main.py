@@ -74,15 +74,15 @@ GENERAL_KEYWORDS = [
     "how does", "why does", "what happened",
     "what was the titanic"
 ]
-def classify(question:str) ->str:
-    q=question.lower().strip()
+def classify(question: str) -> str:
+    q = question.lower().strip()
     for kw in GENERAL_KEYWORDS:
         if kw in q:
-            return 'general'
-        else:
+            return "general"
+    for kw in SQL_KEYWORDS:
+        if kw in q:
             return "sql"
     return "general"
-
 print("Loading sentence transformer...")
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
