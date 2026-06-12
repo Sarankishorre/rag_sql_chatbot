@@ -52,6 +52,37 @@ def build_schema(df, col):
 schema = {col: build_schema(df, col) for col in df.columns}
 print(f"Schema built for {len(schema)} columns.")
 
+#question and answer pairs( few shot examples)
+
+
+SQL_KEYWORDS = [
+    "how many", "count", "total", "sum", "average", "avg",
+    "rate", "percentage", "percent", "ratio",
+    "highest", "lowest", "maximum", "minimum", "max", "min",
+    "each", "per", "every", "by class", "by gender", "by sex",
+    "compare", "vs", "versus", "difference",
+    "show me", "list", "find", "give me",
+    "survived", "died", "death", "survival",
+    "fare", "embarked", "pclass", "breakdown", "distribution"
+]
+
+# These mean the user wants an explanation — NO SQL needed
+GENERAL_KEYWORDS = [
+    "what does", "what is a", "what are",
+    "explain", "define", "meaning",
+    "tell me about", "describe",
+    "how does", "why does", "what happened",
+    "what was the titanic"
+]
+def classify(question:str) ->str:
+    q=question.lower().strip()
+    for kw in GENERAL_KEYWORDS:
+        if kw in q:
+            return 'general'
+        else:
+            return "sql"
+    return "general"
+
 print("Loading sentence transformer...")
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -89,17 +120,28 @@ if not groq_model:
 groq_client = Groq(api_key=groq_api_key)
 
 # GENERATE SQL FROM QUESTION + HISTORY
+from few_shot_examples import FEW_SHOT_EXAMPLES
 def generate_sql(query: str, schema_text: str, history: list) -> str:
     system_prompt = f"""You are a SQL expert. Table name is 'titanic'.
-Write ONE valid SQLite SQL query to answer the question.
-Return ONLY the SQL query. No explanation. No markdown. No backticks.
-- Always use SQLite syntax (LIMIT not TOP, use IS NULL not ISNULL)
-- Always SELECT * or include Name column when user asks for details
-- Only use columns: PassengerId, Survived, Pclass, Name, Sex, Age, SibSp, Parch, Ticket, Fare, Cabin, Embarked
-- For UNION queries always wrap each SELECT in subquery: SELECT * FROM (SELECT ... ORDER BY ... LIMIT n) UNION SELECT * FROM (SELECT ... ORDER BY ... LIMIT n)
+    Write ONE valid SQLite SQL query to answer the question.
+    Return ONLY the SQL query. No explanation. No markdown. No backticks.
+    STRICT RULES — NEVER BREAK THESE:
+    - Always use SQLite syntax (LIMIT not TOP, use IS NULL not ISNULL)
+    - Always SELECT * or include Name column when user asks for details
+    - Only use columns: PassengerId, Survived, Pclass, Name, Sex, Age, SibSp, Parch, Ticket, Fare, Cabin, Embarked
+    - For UNION queries always wrap each SELECT in subquery
+    - NEVER add LIMIT unless user explicitly asks for top N results
+    - ALWAYS use GROUP BY when question says "each", "per", "by class", "by gender"
+    - ALWAYS multiply rates by 100.0 and use ROUND(..., 2) for percentages
+    - ALWAYS use clean column aliases with AS — example: AS death_rate_pct
+    - NEVER add filters the user did not ask for
+    - When breaking down by TWO categories use GROUP BY col1, col2 — never subqueries
 
-Column descriptions:
-{schema_text}"""
+    EXAMPLES OF CORRECT SQL FOR THIS DATABASE:
+    {FEW_SHOT_EXAMPLES}
+
+    Column descriptions:
+    {schema_text}"""
 
     messages = [{"role": "system", "content": system_prompt}]
 
@@ -181,6 +223,25 @@ def health():
 @app.post("/query")
 def query(req: QueryRequest):
     try:
+        question_type = classify(req.question)
+        if question_type=="general":
+            direct_response = groq_client.chat.completions.create(
+                model=groq_model,
+                messages=[{
+                    "role": "user",
+                    "content": f"""You are a helpful assistant for a Titanic passenger dataset.
+                    Answer this question directly in 2-3 sentences. Do not write any SQL.
+                    Question: {req.question}"""
+                }])
+            description = direct_response.choices[0].message.content.strip()
+            return {
+                "success": True,
+                "sql": "",
+                "columns": [],
+                "rows": [],
+                "count": 0,
+                "description": description
+            }
         schema_text = retrieve_schema(req.question)
         sql = generate_sql(req.question, schema_text, req.history)
 
