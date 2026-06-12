@@ -54,35 +54,29 @@ print(f"Schema built for {len(schema)} columns.")
 
 #question and answer pairs( few shot examples)
 
-
-SQL_KEYWORDS = [
-    "how many", "count", "total", "sum", "average", "avg",
-    "rate", "percentage", "percent", "ratio",
-    "highest", "lowest", "maximum", "minimum", "max", "min",
-    "each", "per", "every", "by class", "by gender", "by sex",
-    "compare", "vs", "versus", "difference",
-    "show me", "list", "find", "give me",
-    "survived", "died", "death", "survival",
-    "fare", "embarked", "pclass", "breakdown", "distribution"
-]
-
-# These mean the user wants an explanation — NO SQL needed
-GENERAL_KEYWORDS = [
-    "what does", "what is a", "what are",
-    "explain", "define", "meaning",
-    "tell me about", "describe",
-    "how does", "why does", "what happened",
-    "what was the titanic"
-]
 def classify(question: str) -> str:
-    q = question.lower().strip()
-    for kw in GENERAL_KEYWORDS:
-        if kw in q:
-            return "general"
-    for kw in SQL_KEYWORDS:
-        if kw in q:
-            return "sql"
-    return "general"
+    response = groq_client.chat.completions.create(
+        model=groq_model,
+        messages=[{
+            "role": "user",
+            "content": f"""Classify this question as either 'sql' or 'general'.
+
+'sql' = questions that need data from the Titanic dataset
+Examples: counts, averages, lists, filters, rates, comparisons, top N, survival stats
+
+'general' = factual or explanation questions that don't need data
+Examples: what is Pclass, explain SibSp, what was the Titanic, what does Fare mean
+
+Reply with ONLY one word: sql or general
+No explanation. No punctuation. Just the word.
+
+Question: {question}"""
+        }]
+    )
+    result = response.choices[0].message.content.strip().lower()
+    return "sql" if "sql" in result else "general"
+
+
 print("Loading sentence transformer...")
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
